@@ -1,0 +1,28 @@
+services:
+  keydb:
+    image: eqalpha/keydb:latest
+    container_name: keydb
+    ports:
+      - "${KEYDB_PORT:-6379}:6379"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "keydb-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    volumes:
+      - keydb_data:/data
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    labels:
+      com.caching_proxy.description: "KeyDB cache for cache-service"
+      com.caching_proxy.environment: "${NODE_ENV:-development}"
+      com.caching_proxy.service: "cache"
+
+volumes:
+  keydb_data:
+    name: cache_service_keydb_data

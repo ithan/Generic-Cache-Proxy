@@ -1,0 +1,1125 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Caching proxy Service API",
+    "version": "1.0.0",
+    "description": "API for the caching_proxy Cache Service, a Node.js/TypeScript application acting as a caching middleware layer.\nIt proxies requests to a backend service, caches GET responses based on path and user role,\nand provides administrative endpoints for monitoring and cache management.\n"
+  },
+  "servers": [
+    {
+      "url": "http://localhost:3000",
+      "description": "Local development server (adjust port based on .env)"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Admin",
+      "description": "Endpoints for monitoring, health checks, and cache management."
+    },
+    {
+      "name": "Proxy",
+      "description": "Describes the general behavior of the catch-all proxy endpoint."
+    }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Health Check",
+        "description": "Provides a basic health status of the service. Used for liveness probes.",
+        "operationId": "healthCheck",
+        "responses": {
+          "200": {
+            "description": "Service is healthy.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthStatus"
+                },
+                "example": {
+                  "status": "ok",
+                  "timestamp": "2025-04-03T13:55:34.123Z"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error if the check fails unexpectedly.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Prometheus Metrics",
+        "description": "Exposes performance and application metrics in Prometheus text format. Intended to be scraped by a Prometheus server.",
+        "operationId": "getMetrics",
+        "responses": {
+          "200": {
+            "description": "Prometheus metrics exposition.",
+            "content": {
+              "text/plain; version=0.0.4; charset=utf-8": {
+                "schema": {
+                  "type": "string",
+                  "format": "plain text",
+                  "description": "Metrics in Prometheus text format. Includes http_requests_total, http_request_duration_seconds, cache_keys_total, endpoint_usage_total (with user_role label), and default Node.js metrics."
+                },
+                "example": "# caching_proxy http_requests_total Total number of HTTP requests processed\n# TYPE http_requests_total counter\nhttp_requests_total{method=\"GET\",path=\"/health\",status_code=\"200\",cache_status=\"N/A\"} 1\n# caching_proxy http_request_duration_seconds Duration of HTTP requests in seconds\n# TYPE http_request_duration_seconds histogram\nhttp_request_duration_seconds_bucket{le=\"0.005\",method=\"GET\",path=\"/health\",status_code=\"200\"} 1\n# caching_proxy endpoint_usage_total Detailed endpoint usage statistics by path, cache status, and user role\n# TYPE endpoint_usage_total counter\nendpoint_usage_total{method=\"GET\",path=\"/api/some/path\",cache_status=\"HIT\",user_role=\"authenticated\"} 5\n# ... other metrics ...\n"
+              }
+            }
+          },
+          "500": {
+            "description": "Error collecting metrics.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/keys": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "List Cache Keys",
+        "description": "Retrieves a list of all keys currently stored in the cache (Redis/KeyDB).\nKeys are grouped by the role identifier (`anonymous`, `authenticated`, `admin`, etc.) derived from the cache key structure (`cache:METHOD:ROLE:PATH`).\n**Warning:** This operation uses `SCAN` and can be resource-intensive on the cache instance if the number of keys is very large. Use with caution in production.\n",
+        "operationId": "listCacheKeys",
+        "responses": {
+          "200": {
+            "description": "A list of cache keys grouped by role.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CacheKeysList"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error listing cache keys.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/key": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Get Cache Entry by Key",
+        "description": "Retrieves a specific cache entry directly from the cache (Redis/KeyDB) using its exact key.\nThis is primarily a **debugging endpoint** to inspect the raw content stored in the cache.\nIt bypasses the standard proxy and caching logic.\n",
+        "operationId": "getCacheEntryByKey",
+        "requestBody": {
+          "required": true,
+          "description": "The exact cache key to retrieve.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CacheKeyRequest"
+              },
+              "example": {
+                "key": "cache:GET:anonymous:/api/articles/public-slug"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Cache entry successfully retrieved.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CacheKeyResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request - Missing or invalid 'key' in the request body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Missing or invalid \"key\" in request body"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found - The specified cache key does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "message": "Cache entry not found for key: cache:GET:anonymous:/api/nonexistent"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error retrieving cache entry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/invalidate": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Manually Invalidate Cache",
+        "description": "Manually invalidates (deletes) cache entries matching a specified Redis key pattern.\nSupports wildcards (`*`). Use carefully, especially with broad patterns.\nIf the pattern targets a specific path without specifying a role (e.g., `cache:GET:*:/api/users/123`), the service automatically invalidates entries for *all* roles matching that path.\nIf the pattern includes a specific role (e.g., `cache:GET:anonymous:/api/users/123`), only entries for that role are targeted.\n",
+        "operationId": "invalidateCache",
+        "requestBody": {
+          "required": true,
+          "description": "The pattern to use for cache invalidation.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvalidateRequest"
+              },
+              "example": {
+                "pattern": "cache:GET:*:/api/articles/some-article-slug"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Invalidation process completed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request - Missing or invalid 'pattern' in the request body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Missing or invalid \"pattern\" in request body"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error during cache invalidation process.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/{proxyPath}": {
+      "parameters": [
+        {
+          "name": "proxyPath",
+          "in": "path",
+          "required": true,
+          "description": "Represents any path not matching the specific admin endpoints. Must include the initial `/` and any query parameters. E.g., `/api/users?page=1&sort=name`",
+          "schema": {
+            "type": "string"
+          },
+          "style": "simple",
+          "example": "/api/users?id=123"
+        }
+      ],
+      "get": {
+        "tags": [
+          "Proxy"
+        ],
+        "summary": "Proxy GET Request (with Caching)",
+        "description": "Proxies GET requests to the configured backend URL (`BACKEND_URL`).\nAttempts to serve the response from the cache first (including hot in-memory cache and Redis). Cache keys are generated based on the full path (including query string) and the user's role identifier derived from the `Authorization: Bearer <token>` header (`anonymous`, `authenticated`, `admin`, or other roles).\nHandles `Cache-Control: no-cache` and `Pragma: no-cache` headers to bypass the cache.\n",
+        "operationId": "handleProxyGet",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AuthorizationHeader"
+          },
+          {
+            "$ref": "#/components/parameters/CacheControlHeader"
+          },
+          {
+            "$ref": "#/components/parameters/PragmaHeader"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response, potentially served from cache or backend.",
+            "headers": {
+              "X-Cache-Status": {
+                "$ref": "#/components/headers/X-Cache-Status"
+              },
+              "X-Cache-Expires-In": {
+                "$ref": "#/components/headers/X-Cache-Expires-In"
+              },
+              "X-Cache-Expires-At": {
+                "$ref": "#/components/headers/X-Cache-Expires-At"
+              },
+              "Content-Type": {
+                "description": "Content type of the response body from the backend.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary",
+                  "description": "Response body from cache or backend."
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error from the backend service OR error within the proxy itself (e.g., cache connection error).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "*/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary",
+                  "description": "Backend error response body."
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Bad Gateway - Could not connect to the backend service. Generated by the proxy.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "Gateway Timeout - Backend service did not respond in time. Generated by the proxy.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Any other status code (e.g., 3xx redirects, 4xx client errors like 401, 403, 404) proxied directly from the backend service.\nThe response body and headers will match the backend's response.\n",
+            "headers": {
+              "X-Cache-Status": {
+                "$ref": "#/components/headers/X-Cache-Status"
+              }
+            },
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary",
+                  "description": "The response body proxied from the backend."
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Proxy"
+        ],
+        "summary": "Proxy POST Request (with Invalidation)",
+        "description": "Proxies POST requests directly to the configured backend URL (`BACKEND_URL`).\nDoes **not** cache POST responses.\nAfter successfully proxying, checks if the request path matches any rules in `invalidation_config.json`. If a match occurs, corresponding cache patterns are invalidated asynchronously.\n",
+        "operationId": "handleProxyPost",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AuthorizationHeader"
+          },
+          {
+            "name": "Content-Type",
+            "in": "header",
+            "required": true,
+            "description": "Content type of the request body (e.g., `application/json`).",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Request body to be forwarded to the backend. Structure depends on the backend endpoint being called. Non-JSON content types are treated as binary data.",
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            },
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+             "*/*": {
+               "schema": {
+                 "type": "string",
+                 "format": "binary",
+                 "description": "Raw request body for other content types."
+               }
+             }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response from the backend.",
+            "headers": {
+              "X-Cache-Status": {
+                "$ref": "#/components/headers/X-Cache-Status-NA"
+              }
+            },
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Created response from the backend.",
+            "headers": {
+              "X-Cache-Status": {
+                "$ref": "#/components/headers/X-Cache-Status-NA"
+              }
+            },
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error from the backend service OR error within the proxy itself.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "*/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary",
+                  "description": "Backend error response body."
+                }
+              }
+            }
+          },
+          "502": {
+            "$ref": "#/components/responses/ProxyError502"
+          },
+          "504": {
+            "$ref": "#/components/responses/ProxyError504"
+          },
+          "default": {
+            "description": "Any other status code (e.g., 202 Accepted, 4xx client errors) proxied directly from the backend service.",
+            "headers": {
+              "X-Cache-Status": {
+                "$ref": "#/components/headers/X-Cache-Status-NA"
+              }
+            },
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary",
+                  "description": "The response body proxied from the backend."
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Proxy"
+        ],
+        "summary": "Proxy PUT Request",
+        "description": "Proxies PUT requests directly to the configured backend URL. No caching is performed.",
+        "operationId": "handleProxyPut",
+        "responses": {
+          "200": {
+            "description": "Success response from backend.",
+            "headers": {
+              "X-Cache-Status": {
+                "$ref": "#/components/headers/X-Cache-Status-NA"
+              }
+            },
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "No Content response from backend.",
+            "headers": {
+              "X-Cache-Status": {
+                "$ref": "#/components/headers/X-Cache-Status-NA"
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error from backend or proxy.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "*/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "502": {
+            "$ref": "#/components/responses/ProxyError502"
+          },
+          "504": {
+            "$ref": "#/components/responses/ProxyError504"
+          },
+          "default": {
+            "description": "Other status codes (e.g., 4xx) proxied from backend.",
+            "headers": {
+              "X-Cache-Status": {
+                "$ref": "#/components/headers/X-Cache-Status-NA"
+              }
+            },
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Proxy"
+        ],
+        "summary": "Proxy PATCH Request",
+        "description": "Proxies PATCH requests directly to the configured backend URL. No caching is performed.",
+        "operationId": "handleProxyPatch",
+        "responses": {
+          "200": {
+            "description": "Success response from backend.",
+            "headers": {
+              "X-Cache-Status": {
+                "$ref": "#/components/headers/X-Cache-Status-NA"
+              }
+            },
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "No Content response from backend.",
+            "headers": {
+              "X-Cache-Status": {
+                "$ref": "#/components/headers/X-Cache-Status-NA"
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error from backend or proxy.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "*/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "502": {
+            "$ref": "#/components/responses/ProxyError502"
+          },
+          "504": {
+            "$ref": "#/components/responses/ProxyError504"
+          },
+          "default": {
+            "description": "Other status codes (e.g., 4xx) proxied from backend.",
+            "headers": {
+              "X-Cache-Status": {
+                "$ref": "#/components/headers/X-Cache-Status-NA"
+              }
+            },
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Proxy"
+        ],
+        "summary": "Proxy DELETE Request",
+        "description": "Proxies DELETE requests directly to the configured backend URL. No caching is performed.",
+        "operationId": "handleProxyDelete",
+        "responses": {
+          "200": {
+            "description": "Success response from backend.",
+            "headers": {
+              "X-Cache-Status": {
+                "$ref": "#/components/headers/X-Cache-Status-NA"
+              }
+            },
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "No Content response from backend.",
+            "headers": {
+              "X-Cache-Status": {
+                "$ref": "#/components/headers/X-Cache-Status-NA"
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error from backend or proxy.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "*/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "502": {
+            "$ref": "#/components/responses/ProxyError502"
+          },
+          "504": {
+            "$ref": "#/components/responses/ProxyError504"
+          },
+          "default": {
+            "description": "Other status codes (e.g., 4xx) proxied from backend.",
+            "headers": {
+              "X-Cache-Status": {
+                "$ref": "#/components/headers/X-Cache-Status-NA"
+              }
+            },
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          }
+        }
+      },
+      "head": {
+        "tags": [
+          "Proxy"
+        ],
+        "summary": "Proxy HEAD Request",
+        "description": "Proxies HEAD requests directly to the configured backend URL. No caching is performed. Response contains only headers.",
+        "operationId": "handleProxyHead",
+        "responses": {
+          "200": {
+            "description": "Success response from backend (headers only).",
+            "headers": {
+              "X-Cache-Status": {
+                "$ref": "#/components/headers/X-Cache-Status-NA"
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error from backend or proxy.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "$ref": "#/components/responses/ProxyError502"
+          },
+          "504": {
+            "$ref": "#/components/responses/ProxyError504"
+          },
+          "default": {
+            "description": "Other status codes (e.g., 4xx) proxied from backend (headers only).",
+            "headers": {
+              "X-Cache-Status": {
+                "$ref": "#/components/headers/X-Cache-Status-NA"
+              }
+            }
+          }
+        }
+      },
+      "options": {
+        "tags": [
+          "Proxy"
+        ],
+        "summary": "Proxy OPTIONS Request",
+        "description": "Proxies OPTIONS requests directly to the configured backend URL. No caching is performed. Typically used for CORS preflight requests or checking allowed methods.",
+        "operationId": "handleProxyOptions",
+        "responses": {
+          "200": {
+            "description": "Success response from backend (e.g., Allow header).",
+            "headers": {
+              "X-Cache-Status": {
+                "$ref": "#/components/headers/X-Cache-Status-NA"
+              },
+              "Allow": {
+                "description": "Allowed HTTP methods for the resource",
+                "schema": {
+                  "type": "string",
+                  "example": "GET, POST, OPTIONS"
+                }
+              }
+            },
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "Success response from backend (no body).",
+            "headers": {
+              "X-Cache-Status": {
+                "$ref": "#/components/headers/X-Cache-Status-NA"
+              },
+              "Allow": {
+                "description": "Allowed HTTP methods for the resource",
+                "schema": {
+                  "type": "string",
+                  "example": "GET, HEAD, OPTIONS"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error from backend or proxy.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "*/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "502": {
+            "$ref": "#/components/responses/ProxyError502"
+          },
+          "504": {
+            "$ref": "#/components/responses/ProxyError504"
+          },
+          "default": {
+            "description": "Other status codes (e.g., 4xx) proxied from backend.",
+            "headers": {
+              "X-Cache-Status": {
+                "$ref": "#/components/headers/X-Cache-Status-NA"
+              }
+            },
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "HealthStatus": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok"
+            ],
+            "description": "Indicates the service status."
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The current server timestamp when the check was performed."
+          }
+        },
+        "required": [
+          "status",
+          "timestamp"
+        ]
+      },
+      "CacheKeysList": {
+        "type": "object",
+        "properties": {
+          "keyCount": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Total number of keys currently in the cache."
+          },
+          "keysByRole": {
+            "type": "object",
+            "description": "Cache keys grouped by the role identifier found within the key.",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "example": "cache:GET:anonymous:/api/articles/public"
+              }
+            }
+          },
+          "keys": {
+            "type": "array",
+            "description": "A flat list of all cache keys found.",
+            "items": {
+              "type": "string",
+              "example": "cache:GET:authenticated:/api/user/profile"
+            }
+          }
+        },
+        "required": [
+          "keyCount",
+          "keysByRole",
+          "keys"
+        ]
+      },
+      "InvalidateRequest": {
+        "type": "object",
+        "properties": {
+          "pattern": {
+            "type": "string",
+            "description": "The Redis key pattern to use for invalidation (e.g., `cache:GET:*:/api/users/*`). Wildcards (`*`) are supported.",
+            "example": "cache:GET:*:*"
+          }
+        },
+        "required": [
+          "pattern"
+        ]
+      },
+      "InvalidateResponse": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "Confirmation message indicating the pattern processed.",
+            "example": "Invalidation process completed for pattern: cache:GET:*:/api/articles/123"
+          },
+          "deletedCount": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The number of cache keys deleted based on the provided pattern."
+          }
+        },
+        "required": [
+          "message",
+          "deletedCount"
+        ]
+      },
+      "CacheKeyRequest": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "The exact cache key to retrieve (e.g., `cache:GET:anonymous:/path`).",
+            "example": "cache:GET:authenticated:/api/users/me"
+          }
+        },
+        "required": [
+          "key"
+        ]
+      },
+      "CachedResponse": {
+        "type": "object",
+        "description": "Represents the raw structure stored in the cache.",
+        "properties": {
+          "status": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The HTTP status code of the cached response."
+          },
+          "headers": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "A subset of HTTP headers from the original response (e.g., Content-Type)."
+          },
+          "body": {
+            "type": "object",
+            "description": "The cached response body, stored as a Buffer represented in JSON.",
+            "properties": {
+               "type": {
+                  "type": "string",
+                  "enum": ["Buffer"],
+                  "description": "Indicates the object represents a Buffer."
+               },
+               "data": {
+                  "type": "array",
+                  "items": {
+                     "type": "integer",
+                     "format": "int32"
+                  },
+                  "description": "Array of byte values representing the Buffer's content."
+               }
+            },
+            "required": ["type", "data"],
+            "example": {
+               "type": "Buffer",
+               "data": [ 123, 34, 109, 101, 115, 115, 97, 103, 101, 34, 58, 34, 72, 101, 108, 108, 111, 34, 125 ]
+            }
+          }
+        },
+        "required": [
+          "status",
+          "headers",
+          "body"
+        ]
+      },
+      "CacheKeyResponse": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "Confirmation message.",
+            "example": "Cache entry retrieved for key: cache:GET:anonymous:/api/articles/public-slug"
+          },
+          "cacheEntry": {
+            "$ref": "#/components/schemas/CachedResponse"
+          }
+        },
+        "required": [
+          "message",
+          "cacheEntry"
+        ]
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "description": "A high-level error category or message.",
+            "example": "Internal Server Error"
+          },
+          "message": {
+            "type": "string",
+            "description": "More detailed error message (potentially omitted in production).",
+            "example": "Failed to connect to Redis"
+          }
+        },
+        "required": [
+          "error"
+        ]
+      }
+    },
+    "parameters": {
+      "AuthorizationHeader": {
+        "name": "Authorization",
+        "in": "header",
+        "required": false,
+        "description": "Bearer token for authentication. Used by the cache service to determine the user's role identifier (`anonymous`, `authenticated`, `admin`, etc.) for role-based caching.\nThe service *decodes* the token payload but does *not* verify the signature itself.\n",
+        "schema": {
+          "type": "string",
+          "format": "bearer <token>"
+        },
+        "example": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+      },
+      "CacheControlHeader": {
+        "name": "Cache-Control",
+        "in": "header",
+        "required": false,
+        "description": "Standard HTTP Cache-Control header. If `no-cache` or `max-age=0` is present, the cache service will attempt to revalidate or bypass the cache look-up (`X-Cache-Status: BYPASS` or forces a `MISS`).\n",
+        "schema": {
+          "type": "string"
+        },
+        "example": "no-cache"
+      },
+      "PragmaHeader": {
+        "name": "Pragma",
+        "in": "header",
+        "required": false,
+        "description": "Standard HTTP Pragma header. If `no-cache` is present, the cache service will bypass the cache look-up (`X-Cache-Status: BYPASS`).\n",
+        "schema": {
+          "type": "string"
+        },
+        "example": "no-cache"
+      }
+    },
+    "headers": {
+      "X-Cache-Status": {
+        "description": "Indicates whether the response was served from the cache.\n- `HOT_HIT`: Served from the fast in-memory cache.\n- `HIT`: Served from the main cache (e.g., Redis).\n- `MISS`: Not found in cache, served from backend (and likely cached now).\n- `BYPASS`: Cache lookup skipped due to request headers (`Cache-Control: no-cache` or `Pragma: no-cache`).\n- `CIRCUIT_OPEN`: Cache lookup skipped because the cache backend (Redis) is temporarily protected due to errors.\n- `ERROR`: An error occurred during cache lookup or storage.\n- `N/A`: Cache is not applicable for this request method (e.g., POST, PUT).\n",
+        "schema": {
+          "type": "string",
+          "enum": [
+            "HOT_HIT",
+            "HIT",
+            "MISS",
+            "BYPASS",
+            "CIRCUIT_OPEN",
+            "ERROR",
+            "N/A"
+          ]
+        }
+      },
+      "X-Cache-Status-NA": {
+        "description": "Cache is not applicable for this request method (e.g., POST, PUT, DELETE).",
+        "schema": {
+          "type": "string",
+          "enum": [
+            "N/A"
+          ]
+        }
+      },
+      "X-Cache-Expires-In": {
+        "description": "(Only present on `HIT`, `HOT_HIT` or cacheable `MISS`) Approximate time remaining in seconds until the cache entry expires.",
+        "schema": {
+          "type": "string",
+          "example": "1798 seconds"
+        }
+      },
+      "X-Cache-Expires-At": {
+        "description": "(Only present on `HIT`, `HOT_HIT` or cacheable `MISS`) The absolute UTC timestamp (ISO 8601 format) when the cache entry is set to expire.",
+        "schema": {
+          "type": "string",
+          "format": "date-time",
+          "example": "2025-04-03T14:25:32Z"
+        }
+      }
+    },
+    "responses": {
+      "ProxyError502": {
+        "description": "Bad Gateway - Could not connect to the backend service. Generated by the proxy.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "ProxyError504": {
+        "description": "Gateway Timeout - Backend service did not respond in time. Generated by the proxy.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      }
+    }
+  }
+}

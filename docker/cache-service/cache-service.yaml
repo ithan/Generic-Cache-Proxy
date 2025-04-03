@@ -1,0 +1,33 @@
+services:
+  cache-service:
+    container_name: cache-service
+    build:
+      context: ../..
+      dockerfile: ./docker/cache-service/Dockerfile
+    env_file:
+      - ../../.env
+    environment:
+      NODE_ENV: "${NODE_ENV:-production}"
+      PORT: "${PORT:-3000}"
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+      CACHE_URL: "redis://keydb:6379"
+      BACKEND_URL: "${BACKEND_URL}"
+      CACHE_TTL_SECONDS: "${CACHE_TTL_SECONDS:-1800}"
+    ports:
+      - "${PORT:-3000}:3000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "http://localhost:3000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    labels:
+      com.caching_proxy.description: "Caching proxy service"
+      com.caching_proxy.environment: "${NODE_ENV:-production}"
+      com.caching_proxy.service: "proxy"

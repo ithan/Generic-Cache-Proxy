@@ -1,0 +1,17 @@
+.env
+
+node_modules/
+dist/
+
+pnpm-debug.log
+package-lock.json
+yarn-error.log
+pnpm-lock.yaml
+yarn.lock
+.DS_Store
+
+.vscode/
+.vscode-test/
+.idea/
+
+.clinic/

@@ -1,0 +1,3 @@
+include:
+  - ./docker/cache-service/cache-service.yaml
+  - ./docker/keydb/keydb.yml

@@ -1,0 +1,16 @@
+[
+  {
+    "post_path_regex": "^/api/users$",
+    "invalidate_patterns": [
+      "cache:GET:*:/api/users*",
+      "cache:GET:*:/api/list/users*"
+    ]
+  },
+  {
+    "post_path_regex": "^/api/products/(\\d+)$",
+    "invalidate_patterns": [
+      "cache:GET:*:/api/products/$1",
+      "cache:GET:*:/api/products"
+    ]
+  }
+]
